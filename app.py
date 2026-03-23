@@ -3,84 +3,93 @@ import pandas as pd
 import joblib
 import numpy as np
 
-# 1. Load Assets (Model, Scaler, and the Data)
+# 1. Load Assets (Cached for speed)
 @st.cache_resource
 def load_assets():
-    model_svm = joblib.load('parkinsons_model.pkl')
-    # If you saved a KNN model too, load it here:
-    # model_knn = joblib.load('knn_model.pkl')
+    svm_model = joblib.load('parkinsons_model.pkl')
+    # If you saved a KNN model in Colab, load it here too
+    # knn_model = joblib.load('knn_model.pkl') 
     scaler = joblib.load('scaler.pkl')
-    df = pd.read_csv('parkinsons_data.csv') # Ensure name matches your file
-    return model_svm, scaler, df
+    df = pd.read_csv('MDVR_all_features.csv') 
+    return svm_model, scaler, df
 
 svm_model, sc, df = load_assets()
 
 st.set_page_config(page_title="Parkinson's Case Study", layout="wide")
 
-# --- SECTION 1: CASE STUDY OVERVIEW ---
-st.title("📊 Project Case Study: Parkinson's Voice Analysis")
-st.write("This dashboard showcases the detection of Parkinson's Disease using acoustic voice features.")
+# --- SECTION 1: RESEARCH COMPARISON ---
+st.title("📊 Case Study: Parkinson's Disease Detection")
+st.write("A comparative analysis of Machine Learning algorithms on the MDVR voice dataset.")
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns([1, 1])
+
 with col1:
-    st.subheader("Model Performance")
-    # You can hardcode these based on your LOOCV results from Colab
-    results = {
-        "Algorithm": ["SVM (RBF Kernel)", "KNN (k=9)"],
-        "LOO Accuracy": ["94.8% ", "91.2%"] # Update with your real numbers
+    st.subheader("Model Accuracy Comparison")
+    # Replace these with the actual % results from your LOOCV in Colab
+    comparison_data = {
+        "Algorithm": ["SVM (RBF Kernel)", "KNN (Tuned)"],
+        "LOO Accuracy (%)": [94.85, 91.20], 
+        "Stability (Std Dev)": ["± 2.1%", "± 4.5%"]
     }
-    st.table(pd.DataFrame(results))
+    st.table(pd.DataFrame(comparison_data))
 
 with col2:
-    st.subheader("Dataset Insight")
-    st.write(f"Total Records: {len(df)}")
-    st.write(f"Features Analyzed: {len(df.columns) - 2}") # Subtracting ID and Label
+    st.subheader("Dataset Summary")
+    st.info(f"**Total Samples:** {len(df)} | **Total Features:** {len(df.columns) - 2}")
+    st.write("Features include Jitter, Shimmer, HNR, and various Frequency spreads.")
 
 st.divider()
 
-# --- SECTION 2: SELECT A CASE TO DIAGNOSE ---
-st.subheader("🔎 Case Study Explorer")
-st.write("Select a patient record from the dataset to see the AI prediction.")
+# --- SECTION 2: THE CASE EXPLORER ---
+st.subheader("🔎 Dataset Row Explorer")
+st.write("Select a specific patient record from the dataset to test the model.")
 
-row_idx = st.number_input("Select Row Index (0 to {})".format(len(df)-1), min_value=0, max_value=len(df)-1, value=0)
+# Slider to pick a row
+row_idx = st.slider("Select Record Index", 0, len(df)-1, 10)
 selected_row = df.iloc[[row_idx]]
 
-# Drop non-feature columns (Adjust these names to match your CSV)
-features_only = selected_row.drop(columns=['name', 'status']) 
+# Show the selected data (dropping non-feature columns for display)
+display_data = selected_row.drop(columns=['name', 'status'], errors='ignore')
+st.dataframe(display_data)
 
-st.write("Current Patient Metrics:", features_only)
-
-if st.button("Run Model Prediction"):
+if st.button("Predict Selected Case"):
+    # Ensure we drop 'name' and 'status' before scaling
+    features_only = selected_row.drop(columns=['name', 'status'], errors='ignore')
     scaled_input = sc.transform(features_only)
-    prediction = svm_model.predict(scaled_input)
     
-    actual_label = "Parkinson's" if selected_row['status'].values[0] == 1 else "Healthy"
-    pred_label = "Parkinson's" if prediction[0] == 1 else "Healthy"
+    prediction = svm_model.predict(scaled_input)
+    actual = "Parkinson's" if selected_row['status'].values[0] == 1 else "Healthy"
     
     if prediction[0] == 1:
-        st.error(f"Prediction: {pred_label} (Actual: {actual_label})")
+        st.error(f"**AI Prediction:** Parkinson's Detected | **Actual Label:** {actual}")
     else:
-        st.success(f"Prediction: {pred_label} (Actual: {actual_label})")
+        st.success(f"**AI Prediction:** Healthy | **Actual Label:** {actual}")
 
 st.divider()
 
-# --- SECTION 3: INTERACTIVE REQUIREMENTS (MANUAL INPUT) ---
-st.subheader("⌨️ Manual Requirement Testing")
-st.write("Adjust features manually to see how the model reacts to different vocal patterns.")
+# --- SECTION 3: MANUAL REQUIREMENTS ---
+st.subheader("⌨️ Manual Requirement Entry")
+st.write("Input specific voice metrics to see how the model reacts.")
 
-with st.expander("Click to adjust voice features"):
-    # Create sliders for the most important features found in your EDA
-    f0 = st.slider("MDVP:Fo(Hz)", 70.0, 260.0, 150.0)
-    jitter = st.slider("MDVP:Jitter(%)", 0.0, 0.05, 0.01)
-    shimmer = st.slider("MDVP:Shimmer", 0.0, 0.15, 0.05)
+with st.expander("Adjust Requirements Manually"):
+    # We use the selected row as a base template
+    manual_df = features_only.copy()
     
-    # Note: For a real prediction, you'd need all features. 
-    # For the demo, we can use the selected_row values and only update these 3.
-    manual_input = features_only.copy()
-    manual_input.iloc[0, 0] = f0 # Update based on your column order
-    # ... update others ...
+    # Let user adjust 3 key features as a demo
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        new_f0 = st.number_input("Avg Frequency (Hz)", value=float(manual_df.iloc[0, 0]))
+    with c2:
+        new_jitter = st.number_input("Jitter (%)", value=float(manual_df.iloc[0, 3]))
+    with c3:
+        new_shimmer = st.number_input("Shimmer", value=float(manual_df.iloc[0, 8]))
 
-    if st.button("Predict Manual Input"):
-        manual_scaled = sc.transform(manual_input)
-        manual_pred = svm_model.predict(manual_scaled)
-        st.info("Manual Prediction: " + ("Parkinson's" if manual_pred[0]==1 else "Healthy"))
+    # Update the temp dataframe
+    manual_df.iloc[0, 0] = new_f0
+    manual_df.iloc[0, 3] = new_jitter
+    manual_df.iloc[0, 8] = new_shimmer
+
+    if st.button("Predict Manual Entry"):
+        m_scaled = sc.transform(manual_df)
+        m_pred = svm_model.predict(m_scaled)
+        st.info("Result: " + ("Parkinson's" if m_pred[0] == 1 else "Healthy"))
