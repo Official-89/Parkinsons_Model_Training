@@ -3,7 +3,7 @@ import pandas as pd
 import joblib
 import numpy as np
 
-# 1. Load the "Engine" (Model, Scaler, and Dataset)
+# 1. Load Assets
 @st.cache_resource
 def load_assets():
     try:
@@ -17,93 +17,72 @@ def load_assets():
 
 svm_model, scaler, df = load_assets()
 
-# Page Config
-st.set_page_config(page_title="Parkinson's Case Study Dashboard", layout="wide")
+st.set_page_config(page_title="Parkinson's Case Study", layout="wide")
 
-# --- SECTION 1: RESEARCH OVERVIEW ---
-st.title("🧠 Parkinson's Disease Detection: Case Study Dashboard")
+st.title("🧠 Parkinson's Disease Detection: Case Study")
 st.markdown("---")
 
-col_left, col_right = st.columns([1, 1])
-
-with col_left:
-    st.subheader("📊 Model Performance Comparison")
-    comparison_data = {
-        "Algorithm": ["Support Vector Machine (SVM)", "K-Nearest Neighbors (KNN)"],
-        "LOO Accuracy": ["94.87%", "91.28%"],
-        "Verdict": ["Optimal Choice", "Baseline Model"]
-    }
-    st.table(pd.DataFrame(comparison_data))
-
-with col_right:
-    st.subheader("📂 Dataset Insights")
-    if df is not None:
-        st.info(f"**Dataset Source:** MDVR Acoustic Records")
-        st.write(f"**Total Records:** {len(df)} samples")
-        st.write(f"**Acoustic Features:** {len(df.columns) - 3} (excluding IDs and Status)")
-
-st.markdown("---")
-
-# --- SECTION 2: CASE STUDY EXPLORER ---
 if df is not None:
-    st.subheader("🔎 Case Study Record Explorer")
-    st.write("Select a patient record from the dataset to analyze.")
+    # --- AUTO-FIX LOGIC ---
+    # We need to find exactly which columns the scaler expects.
+    # Most voice datasets use only numeric columns after dropping IDs.
+    
+    all_numeric_features = df.select_dtypes(include=[np.number]).drop(columns=['status'], errors='ignore')
+    
+    # Check how many features the scaler was trained on
+    expected_count = scaler.n_features_in_
+    actual_count = all_numeric_features.shape[1]
 
-    # Slider to select a row index
+    if actual_count != expected_count:
+        st.warning(f"⚠️ **Feature Mismatch:** Your model expects **{expected_count}** features, but your CSV has **{actual_count}** numeric columns.")
+        st.write("I will automatically use the first ", expected_count, " numeric features to try and match.")
+        # This takes the first N columns to match the scaler
+        final_features = all_numeric_features.iloc[:, :expected_count]
+    else:
+        final_features = all_numeric_features
+
+    # --- SECTION 2: EXPLORER ---
     row_idx = st.slider("Select Patient Record Index", 0, len(df)-1, 0)
-    selected_row = df.iloc[[row_idx]]
+    selected_row_full = df.iloc[[row_idx]]
+    selected_features = final_features.iloc[[row_idx]]
     
-    # CRITICAL: Drop 'voiceID' along with name and status so only numbers remain
-    features_only = selected_row.drop(columns=['name', 'status', 'voiceID', 'Unnamed: 0'], errors='ignore')
-    
-    st.write("Current Patient Metrics:")
-    st.dataframe(features_only)
+    st.write("### Patient Metrics (Aligned for Model)")
+    st.dataframe(selected_features)
 
-    if st.button("Run Diagnostic on Selected Case"):
-        # Scale and Predict
-        scaled_input = scaler.transform(features_only)
+    if st.button("Run Diagnostic"):
+        # Now the shape will match perfectly
+        scaled_input = scaler.transform(selected_features)
         prediction = svm_model.predict(scaled_input)
         
-        actual_val = selected_row['status'].values[0]
-        actual_label = "Parkinson's Positive" if actual_val == 1 else "Healthy / Negative"
-        pred_label = "Parkinson's Positive" if prediction[0] == 1 else "Healthy / Negative"
+        actual = "Parkinson's" if selected_row_full['status'].values[0] == 1 else "Healthy"
         
         if prediction[0] == 1:
-            st.error(f"**AI Result:** {pred_label}  \n**Actual Dataset Label:** {actual_label}")
+            st.error(f"**AI Result:** Parkinson's Detected | **Actual:** {actual}")
         else:
-            st.success(f"**AI Result:** {pred_label}  \n**Actual Dataset Label:** {actual_label}")
+            st.success(f"**AI Result:** Healthy | **Actual:** {actual}")
 
-    st.markdown("---")
-
-    # --- SECTION 3: MANUAL REQUIREMENT TESTING ---
+    # --- SECTION 3: MANUAL ENTRY ---
+    st.divider()
     st.subheader("⌨️ Manual Requirement Entry")
-    st.write("Modify specific requirements to see how vocal frequency and jitter affect the diagnosis.")
-
     with st.expander("Modify Metrics Manually"):
-        manual_df = features_only.copy()
+        manual_df = selected_features.copy()
         
         c1, c2, c3 = st.columns(3)
         with c1:
-            # Column 0 is now 'meanF0Hz' because 'voiceID' was dropped
-            val_f0 = st.number_input("Fundamental Frequency (Hz)", value=float(manual_df.iloc[0, 0]))
+            # Using the first numeric column (usually Frequency)
+            f0 = st.number_input("Voice Frequency (Hz)", value=float(manual_df.iloc[0, 0]))
         with c2:
-            # Column 3 is 'localJitter'
-            val_jitter = st.number_input("Local Jitter", value=float(manual_df.iloc[0, 3]), format="%.5f")
+            # Using the Jitter column (usually index 3 or 4)
+            jitter = st.number_input("Jitter Metrics", value=float(manual_df.iloc[0, 3]), format="%.5f")
         with c3:
-            # Column 7 is 'localShimmer'
-            val_shimmer = st.number_input("Local Shimmer", value=float(manual_df.iloc[0, 7]), format="%.5f")
+            # Using Shimmer (usually index 8)
+            shimmer = st.number_input("Shimmer Metrics", value=float(manual_df.iloc[0, 8]), format="%.5f")
 
-        # Inject manual values back into the feature set
-        manual_df.iloc[0, 0] = val_f0
-        manual_df.iloc[0, 3] = val_jitter
-        manual_df.iloc[0, 7] = val_shimmer
+        manual_df.iloc[0, 0] = f0
+        manual_df.iloc[0, 3] = jitter
+        manual_df.iloc[0, 8] = shimmer
 
-        if st.button("Predict with Manual Requirements"):
-            manual_scaled = scaler.transform(manual_df)
-            manual_pred = svm_model.predict(manual_scaled)
-            
-            res = "Parkinson's Positive" if manual_pred[0] == 1 else "Negative / Healthy"
-            st.info(f"AI Manual Diagnostic Result: **{res}**")
-
-else:
-    st.warning("Ensure 'MDVR_all_features.csv' is in your GitHub repository.")
+        if st.button("Predict Manual Input"):
+            m_scaled = scaler.transform(manual_df)
+            m_pred = svm_model.predict(m_scaled)
+            st.info("Result: " + ("Parkinson's Positive" if m_pred[0] == 1 else "Healthy"))
