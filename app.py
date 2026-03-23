@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 import joblib
 import numpy as np
-import json
 
 # 1. Load the "Engine" (Model, Scaler, and Dataset)
-# Using cache_resource so the app stays fast and doesn't reload files every click
 @st.cache_resource
 def load_assets():
     try:
@@ -13,8 +11,8 @@ def load_assets():
         sc = joblib.load('scaler.pkl')
         dataset = pd.read_csv('MDVR_all_features.csv')
         return model, sc, dataset
-    except FileNotFoundError as e:
-        st.error(f"Error: Missing required files. Ensure 'parkinsons_model.pkl', 'scaler.pkl', and 'MDVR_all_features.csv' are in your GitHub repo. {e}")
+    except Exception as e:
+        st.error(f"Error loading files: {e}")
         return None, None, None
 
 svm_model, scaler, df = load_assets()
@@ -30,7 +28,6 @@ col_left, col_right = st.columns([1, 1])
 
 with col_left:
     st.subheader("📊 Model Performance Comparison")
-    # These numbers are based on your tuned SVM and KNN results from Colab
     comparison_data = {
         "Algorithm": ["Support Vector Machine (SVM)", "K-Nearest Neighbors (KNN)"],
         "LOO Accuracy": ["94.87%", "91.28%"],
@@ -43,38 +40,34 @@ with col_right:
     if df is not None:
         st.info(f"**Dataset Source:** MDVR Acoustic Records")
         st.write(f"**Total Records:** {len(df)} samples")
-        st.write(f"**Acoustic Features:** {len(df.columns) - 2} (Jitter, Shimmer, HNR, etc.)")
+        st.write(f"**Acoustic Features:** {len(df.columns) - 3} (excluding IDs and Status)")
 
 st.markdown("---")
 
 # --- SECTION 2: CASE STUDY EXPLORER ---
 if df is not None:
     st.subheader("🔎 Case Study Record Explorer")
-    st.write("Select a specific patient record from the dataset to analyze how the AI performs.")
+    st.write("Select a patient record from the dataset to analyze.")
 
     # Slider to select a row index
     row_idx = st.slider("Select Patient Record Index", 0, len(df)-1, 0)
-    
-    # Isolate the selected row
     selected_row = df.iloc[[row_idx]]
     
-    # Display the record (dropping ID and status columns for a clean view)
-    display_df = selected_row.drop(columns=['name', 'status'], errors='ignore')
-    st.dataframe(display_df)
+    # CRITICAL: Drop 'voiceID' along with name and status so only numbers remain
+    features_only = selected_row.drop(columns=['name', 'status', 'voiceID', 'Unnamed: 0'], errors='ignore')
+    
+    st.write("Current Patient Metrics:")
+    st.dataframe(features_only)
 
     if st.button("Run Diagnostic on Selected Case"):
-        # Pre-process the selected row
-        features_only = selected_row.drop(columns=['name', 'status'], errors='ignore')
+        # Scale and Predict
         scaled_input = scaler.transform(features_only)
-        
-        # Make Prediction
         prediction = svm_model.predict(scaled_input)
         
-        # Compare with Ground Truth (Actual Label)
-        actual_label = "Parkinson's Detected" if selected_row['status'].values[0] == 1 else "Healthy"
-        pred_label = "Parkinson's Detected" if prediction[0] == 1 else "Healthy"
+        actual_val = selected_row['status'].values[0]
+        actual_label = "Parkinson's Positive" if actual_val == 1 else "Healthy / Negative"
+        pred_label = "Parkinson's Positive" if prediction[0] == 1 else "Healthy / Negative"
         
-        st.write("### AI Prediction Results")
         if prediction[0] == 1:
             st.error(f"**AI Result:** {pred_label}  \n**Actual Dataset Label:** {actual_label}")
         else:
@@ -87,21 +80,23 @@ if df is not None:
     st.write("Modify specific requirements to see how vocal frequency and jitter affect the diagnosis.")
 
     with st.expander("Modify Metrics Manually"):
-        # Use the selected row as a starting template
-        manual_df = display_df.copy()
+        manual_df = features_only.copy()
         
         c1, c2, c3 = st.columns(3)
         with c1:
+            # Column 0 is now 'meanF0Hz' because 'voiceID' was dropped
             val_f0 = st.number_input("Fundamental Frequency (Hz)", value=float(manual_df.iloc[0, 0]))
         with c2:
-            val_jitter = st.number_input("Jitter (%)", value=float(manual_df.iloc[0, 3]), format="%.5f")
+            # Column 3 is 'localJitter'
+            val_jitter = st.number_input("Local Jitter", value=float(manual_df.iloc[0, 3]), format="%.5f")
         with c3:
-            val_shimmer = st.number_input("Shimmer", value=float(manual_df.iloc[0, 8]), format="%.5f")
+            # Column 7 is 'localShimmer'
+            val_shimmer = st.number_input("Local Shimmer", value=float(manual_df.iloc[0, 7]), format="%.5f")
 
         # Inject manual values back into the feature set
         manual_df.iloc[0, 0] = val_f0
         manual_df.iloc[0, 3] = val_jitter
-        manual_df.iloc[0, 8] = val_shimmer
+        manual_df.iloc[0, 7] = val_shimmer
 
         if st.button("Predict with Manual Requirements"):
             manual_scaled = scaler.transform(manual_df)
@@ -111,4 +106,4 @@ if df is not None:
             st.info(f"AI Manual Diagnostic Result: **{res}**")
 
 else:
-    st.warning("Please upload your 'MDVR_all_features.csv' to the GitHub repository to enable the dashboard features.")
+    st.warning("Ensure 'MDVR_all_features.csv' is in your GitHub repository.")
